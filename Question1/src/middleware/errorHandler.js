@@ -1,22 +1,21 @@
 export const errorHandler = (err, req, res, next) => {
-    console.error('Unhandled Error:', err);
-
-    if (err.message.includes('Unable to retrieve')) {
-        return res.status(503).json({
-            error: 'Service Unavailable',
-            message: err.message
-        });
+    console.error('Error handling request:', err);
+    
+    let statusCode = err.statusCode || 500;
+    
+    if (err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT') {
+        statusCode = 503;
+    } else if (err.response && err.response.status) {
+        statusCode = err.response.status;
     }
-
-    if (err.message.includes('Maximum tickers')) {
-        return res.status(400).json({
-            error: 'Bad Request',
-            message: err.message
-        });
-    }
-
-    res.status(500).json({
-        error: 'Internal Server Error',
-        message: 'An unexpected error occurred'
+    
+    // Send error response with appropriate structure
+    res.status(statusCode).json({
+        success: false,
+        error: {
+            message: err.message || 'An unexpected error occurred',
+            code: err.code || 'INTERNAL_ERROR',
+            status: statusCode
+        }
     });
 };

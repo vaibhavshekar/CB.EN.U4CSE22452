@@ -4,63 +4,98 @@ import { API_CONFIG } from '../config/api.config.js';
 
 class CorrelationService {
     async calculateStockCorrelation(tickers, minutes) {
+
+        if (!tickers || !Array.isArray(tickers) || tickers.length < 2) {
+            throw new Error('At least two valid stock tickers are required for correlation');
+        }
+        
+        const tickersToCompare = tickers.slice(0, API_CONFIG.MAX_CORRELATION_TICKERS);
         if (tickers.length > API_CONFIG.MAX_CORRELATION_TICKERS) {
-            throw new Error(`Maximum ${API_CONFIG.MAX_CORRELATION_TICKERS} tickers allowed for correlation`);
+            console.warn(`Only the first ${API_CONFIG.MAX_CORRELATION_TICKERS} tickers will be compared`);
         }
 
-        const stockDataPromises = tickers.map(ticker => 
-            StockDataService.getAverageStockPrice(ticker, minutes)
-        );
+        try {
 
-        const stocksData = await Promise.all(stockDataPromises);
+            const stockDataPromises = tickersToCompare.map(ticker => 
+                StockDataService.getAverageStockPrice(ticker, minutes)
+                    .catch(err => {
+                        console.error(`Error fetching data for ${ticker}:`, err);
+                        return { averagePrice: null, priceHistory: [] };
+                    })
+            );
 
-        const stocksResponse = {};
-        tickers.forEach((ticker, index) => {
-            stocksResponse[ticker] = stocksData[index];
-        });
+            const stocksData = await Promise.all(stockDataPromises);
 
-        const alignedPrices = this.alignPriceHistories(stocksData);
+            const stocksResponse = {};
+            tickersToCompare.forEach((ticker, index) => {
+                stocksResponse[ticker] = stocksData[index];
+            });
 
-        const correlation = alignedPrices 
-            ? calculateCorrelation(
-                alignedPrices.map(p => p.x), 
-                alignedPrices.map(p => p.y)
-            )
-            : 0;
+            let correlation = 0;
+            
 
-        return {
-            correlation,
-            stocks: stocksResponse
-        };
+            const validStocks = stocksData.filter(data => 
+                data && data.priceHistory && data.priceHistory.length > 0
+            );
+            
+            if (validStocks.length >= 2) {
+                const alignedPrices = this.alignPriceHistories(stocksData[0], stocksData[1]);
+                
+                if (alignedPrices && alignedPrices.length > 1) {
+                    correlation = calculateCorrelation(
+                        alignedPrices.map(p => p.x), 
+                        alignedPrices.map(p => p.y)
+                    );
+                }
+            }
+
+            return {
+                correlation,
+                stocks: stocksResponse
+            };
+        } catch (error) {
+            console.error('Error calculating stock correlation:', error);
+            throw new Error('Failed to calculate stock correlation');
+        }
     }
 
-    alignPriceHistories(stocksData) {
-        if (stocksData.length !== 2 || 
-            stocksData.some(data => data.priceHistory.length === 0)) {
+    alignPriceHistories(stock1Data, stock2Data) {
+        if (!stock1Data || !stock2Data || 
+            !stock1Data.priceHistory || !stock2Data.priceHistory ||
+            stock1Data.priceHistory.length === 0 || stock2Data.priceHistory.length === 0) {
             return null;
         }
 
-        const [stock1, stock2] = stocksData;
-
-
         const alignedPrices = [];
+        const timeWindowMs = 60000; 
 
-        stock1.priceHistory.forEach(price1 => {
-
-            const matchingPrice = stock2.priceHistory.find(price2 => 
-                Math.abs(new Date(price1.lastUpdatedAt).getTime() - 
-                         new Date(price2.lastUpdatedAt).getTime()) < 60000 // within 1 minute
-            );
-
-            if (matchingPrice) {
+        for (const price1 of stock1Data.priceHistory) {
+            const time1 = new Date(price1.lastUpdatedAt).getTime();
+            
+            let bestMatch = null;
+            let minTimeDiff = Number.MAX_SAFE_INTEGER;
+            
+            for (const price2 of stock2Data.priceHistory) {
+                const time2 = new Date(price2.lastUpdatedAt).getTime();
+                const timeDiff = Math.abs(time1 - time2);
+                
+                if (timeDiff < minTimeDiff && timeDiff < timeWindowMs) {
+                    minTimeDiff = timeDiff;
+                    bestMatch = price2;
+                }
+            }
+            
+            if (bestMatch) {
                 alignedPrices.push({
                     x: price1.price,
-                    y: matchingPrice.price
+                    y: bestMatch.price,
+                    time1: price1.lastUpdatedAt,
+                    time2: bestMatch.lastUpdatedAt
                 });
             }
-        });
+        }
 
-        return alignedPrices.length > 0 ? alignedPrices : null;
+        return alignedPrices.length > 1 ? alignedPrices : null;
     }
 }
 
