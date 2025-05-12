@@ -6,7 +6,7 @@ import axios from 'axios';
 import { API_CONFIG } from './config/api.config.js';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 
 // Test the API connection directly on startup
 const testApiConnection = async () => {
